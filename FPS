@@ -1,0 +1,115 @@
+import os, zipfile, textwrap
+
+# Base folder
+base = '/mnt/data/fps-3d-multiplayer'
+os.makedirs(f'{base}/public', exist_ok=True)
+
+# Files to create
+files = {
+'package.json': textwrap.dedent('''{
+  "name": "fps-3d-multiplayer",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.18.2", "socket.io": "^4.7.2" }
+}'''),
+
+'server.js': textwrap.dedent('''
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+const PORT = 3000;
+app.use(express.static('public'));
+let players = {};
+io.on('connection', socket => {
+  players[socket.id] = { id: socket.id, x:0, y:0, z:0, hp:200 };
+  socket.emit('init', { id: socket.id, players });
+  socket.on('input', data => { Object.assign(players[socket.id], data); });
+  socket.on('disconnect', () => { delete players[socket.id]; io.emit('playerLeft', socket.id); });
+});
+setInterval(()=>{ io.emit('state', { players }); }, 50);
+server.listen(PORT, ()=>console.log('Server running on http://localhost:'+PORT));
+'''),
+
+'public/index.html': textwrap.dedent('''
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>3D FPS Multiplayer</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<div id="ui"><div id="hp">HP: 200</div></div>
+<canvas id="canvas"></canvas>
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://unpkg.com/three@0.155.0/build/three.min.js"></script>
+<script src="game.js"></script>
+</body></html>
+'''),
+
+'public/style.css': textwrap.dedent('''
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#121212;color:#fff;font-family:sans-serif;}
+#ui{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.5);padding:8px;border-radius:6px;}
+canvas{display:block;width:100%;height:100%;}
+'''),
+
+'public/game.js': textwrap.dedent('''
+const socket = io();
+let playerId=null, players={}, input={forward:false,back:false,left:false,right:false,dash:false};
+let scene, camera, renderer, playerMeshes={};
+socket.on('init', data=>{ playerId=data.id; players=data.players; initScene(); animate(); });
+socket.on('state', data=>{ players=data.players; updateMeshes(); });
+
+document.addEventListener('keydown', e=>{ if(e.code==='KeyW') input.forward=true; if(e.code==='KeyS') input.back=true; if(e.code==='KeyA') input.left=true; if(e.code==='KeyD') input.right=true; if(e.code==='KeyE') input.dash=true; });
+document.addEventListener('keyup', e=>{ if(e.code==='KeyW') input.forward=false; if(e.code==='KeyS') input.back=false; if(e.code==='KeyA') input.left=false; if(e.code==='KeyD') input.right=false; if(e.code==='KeyE') input.dash=false; });
+setInterval(()=>{ socket.emit('input', input); },50);
+
+function initScene(){
+  renderer=new THREE.WebGLRenderer({canvas:document.getElementById('canvas')});
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x87ceeb);
+  camera=new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,1,10000); camera.position.set(0,100,300);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1));
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(2000,2000), new THREE.MeshStandardMaterial({color:0x2c6b2c}));
+  ground.rotation.x=-Math.PI/2; scene.add(ground);
+}
+function updateMeshes(){
+  for(const id in players){
+    if(!playerMeshes[id]){ const mesh=new THREE.Mesh(new THREE.BoxGeometry(10,40,10), new THREE.MeshStandardMaterial({color:id===playerId?0x00ff00:0xff0000})); scene.add(mesh); playerMeshes[id]=mesh;}
+    const p=players[id]; playerMeshes[id].position.set(p.x||0,20,p.z||0);
+    if(id===playerId) document.getElementById('hp').textContent='HP: '+p.hp;
+  }
+}
+function animate(){ requestAnimationFrame(animate); renderer.render(scene,camera); }
+'''),
+
+'README.md': textwrap.dedent('''
+# 3D FPS Multiplayer Base
+- Large 3D map
+- 200 HP health bar
+- Dash with E key
+- Multiplayer via Socket.io
+
+Run:
+1. npm install
+2. npm start
+3. Open http://localhost:3000
+''')
+}
+
+# Write files
+for path, content in files.items():
+    full = os.path.join(base, path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w') as f: f.write(content)
+
+# Create zip
+zip_path='/mnt/data/fps-3d-multiplayer.zip'
+with zipfile.ZipFile(zip_path,'w',zipfile.ZIP_DEFLATED) as zf:
+    for root, _, fs in os.walk(base):
+        for fname in fs:
+            full=os.path.join(root,fname)
+            arc=os.path.relpath(full, base)
+            zf.write(full, arc)
+
+zip_path
